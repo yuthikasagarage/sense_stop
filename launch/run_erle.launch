@@ -1,4 +1,0 @@
-<launch>
-<node name="main_sense" pkg="your_pkg_name" type="main_sense"/>
-<node name="joy_interface_node" pkg="joy_interface" type="joy_interface" output="screen"/>
-</launch>
