@@ -30,3 +30,11 @@ add_dependencies(main_sense ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTE
 target_link_libraries(main_sense
   ${catkin_LIBRARIES}
 )
+
+add_executable(iter_1
+  src/iter_1.cpp
+)
+add_dependencies(iter_1 ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+target_link_libraries(iter_1
+  ${catkin_LIBRARIES}
+)

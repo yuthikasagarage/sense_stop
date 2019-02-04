@@ -5,6 +5,7 @@
 #include <geometry_msgs/TwistStamped.h>
 #include <geometry_msgs/Vector3.h>
 #include <math.h>
+#include <math.h>
 #include <mavros_msgs/CommandBool.h>
 #include <mavros_msgs/CommandTOL.h>
 #include <mavros_msgs/SetMavFrame.h>
@@ -12,6 +13,7 @@
 #include <mavros_msgs/State.h>
 #include <mavros_msgs/StreamRate.h>
 #include <ros/ros.h>
+#include <sensor_msgs/Imu.h>
 #include <sensor_msgs/LaserScan.h>
 #include <std_msgs/String.h>
 #include <string>
@@ -27,6 +29,7 @@ public:
   void laserCallback(const sensor_msgs::LaserScan::ConstPtr &msg);
   void state_cb(const mavros_msgs::State::ConstPtr &msg);
   void velocity_cb(const geometry_msgs::TwistStamped::ConstPtr &msg);
+  void accel_cb(const sensor_msgs::Imu::ConstPtr &msg);
   void quad_cb(const std_msgs::String::ConstPtr &msg);
   float vx;
   float vy;
@@ -35,12 +38,11 @@ public:
   ros::Subscriber scan_sub;
   ros::Subscriber state_sub;
   ros::Subscriber velocity_sub;
-
+  ros::Subscriber accel_sub;
   ros::Subscriber quad_sub;
   geometry_msgs::PoseStamped uavPose;
   int inBound(float invalue);
   ros::Publisher bodyAxisVelocityPublisher;
-  ros::Publisher offboardVelocityPublisher;
   ros::Publisher local_pos_pub;
   ros::ServiceClient set_mode_client;
   ros::ServiceClient frame_service;
@@ -49,10 +51,14 @@ public:
   sensor_msgs::LaserScan a;
   double vbx;
   double vby;
+  float braking_distance;
   double vbz;
+  double abx;
+  double aby;
+  double abz;
   double vxfinal;
   double vyfinal;
-
+  double minVal;
   std_msgs::String current_quad;
   ros::Time last_request;
   geometry_msgs::Twist offboard_twist;
@@ -60,7 +66,7 @@ public:
 private:
 };
 tsa::tsa()
-// Initialization list
+
 {
 
   ros::NodeHandle nh;
@@ -81,7 +87,7 @@ tsa::tsa()
   frame_service.call(mavframe_req, mavframe_resp);
 
   mavros_msgs::SetMode offb_set_mode;
-
+  mavros_msgs::SetMode prev_mode;
   //  Set Higher Stream Rate for the remote
   mavros_msgs::StreamRate srv_setStreamRate;
   srv_setStreamRate.request.stream_id = 3;
@@ -92,15 +98,13 @@ tsa::tsa()
   bodyAxisVelocityPublisher = nh.advertise<geometry_msgs::TwistStamped>(
       "/mavros/setpoint_velocity/cmd_vel", 10);
 
-  offboardVelocityPublisher = nh.advertise<geometry_msgs::Twist>(
-      "/mavros/setpoint_velocity/cmd_vel_unstamped", 10);
   state_sub = nh.subscribe<mavros_msgs::State>("mavros/state", 20,
                                                &tsa::state_cb, this);
 
-  quad_sub = nh.subscribe("/scan/quadrant", 10, &tsa::quad_cb, this);
+  quad_sub = nh.subscribe("/scan/quadrant", 100, &tsa::quad_cb, this);
   velocity_sub = nh.subscribe("/mavros/local_position/velocity", 20,
                               &tsa::velocity_cb, this);
-
+  accel_sub = nh.subscribe("/mavros/imu/data", 20, &tsa::accel_cb, this);
   scan_sub = nh.subscribe("/laser/scan", 10, &tsa::laserCallback, this);
 
   ROS_INFO("Initialization complete");
@@ -111,18 +115,18 @@ tsa::tsa()
 tsa::~tsa() {}
 void tsa::laserCallback(const sensor_msgs::LaserScan::ConstPtr &msg) {
 
-  double minVal = 1000;
+  minVal = 1000;
 
   for (int i = 0; i < 360; i++) {
     if ((msg->ranges[i] <= minVal) && (msg->ranges[i] >= msg->range_min) &&
         (msg->ranges[i] <= msg->range_max))
       minVal = msg->ranges[i];
-    cout << minVal << endl;
   }
 }
 
 void tsa::state_cb(const mavros_msgs::State::ConstPtr &msg) {
   current_state = *msg;
+  // cout << current_state << endl;
 }
 
 void tsa::velocity_cb(const geometry_msgs::TwistStamped::ConstPtr &msg) {
@@ -134,41 +138,74 @@ void tsa::velocity_cb(const geometry_msgs::TwistStamped::ConstPtr &msg) {
   // taking these to use as gain to stop the moment of the quad according to the
   // current velocity of the quad.
 }
+void tsa::accel_cb(const sensor_msgs::Imu::ConstPtr &msg) {
+
+  abx = msg->linear_acceleration.x;
+  aby = msg->linear_acceleration.y;
+  abz = msg->linear_acceleration.z;
+
+  // taking these to use as gain to stop the moment of the quad according to the
+  // current accelararion of the quad.
+}
 
 void tsa::Publish() {
 
-  vxfinal = vx * vbx * vbx;
-  vyfinal = vy * vby * vby;
+  vxfinal = vx * vbx * vbx * 0.5;
+  vyfinal = vy * vby * vby * 0.5;
   cout << "x velocity" << vxfinal << endl;
   cout << "y velocity" << vyfinal << endl;
   geometry_msgs::TwistStamped vs_body_axis;
   ros::Rate rate(20.0);
 
+  if (!activate_) {
+    cout << "----in not activate--------" << ros::Time::now() - last_request
+         << "--breaking distance---" << braking_distance << "--minValue--"
+         << minVal << endl;
+    cout << current_state.mode << endl;
+    mavros_msgs::SetMode prev_mode;
+    prev_mode.request.custom_mode = "POSCTL";
+    set_mode_client.call(prev_mode);
+
+    if (ros::Time::now() - last_request < ros::Duration(2.0) && minVal < 1) {
+
+      ros::Rate rate(100.0);
+      for (int i = 10; ros::ok() && i > 0; --i) {
+        bodyAxisVelocityPublisher.publish(vs_body_axis);
+        rate.sleep();
+      }
+    }
+  }
+
   if (activate_) {
     stop_counter++;
 
     // if (stop_counter % 3 == 0) {
-
+    cout << "---- activate--------" << ros::Time::now() - last_request
+         << "------" << braking_distance << "----" << endl;
     cout << current_state.mode << endl;
-    if (current_state.mode == "OFFBOARD") {
+    // if (current_state.mode == "OFFBOARD") {
+    //   return;
+    // }
+
+    if (minVal > 2.25) {
       return;
     }
-
     mavros_msgs::SetMode offb_set_mode;
     offb_set_mode.request.custom_mode = "OFFBOARD";
     ros::Rate rate(100.0);
 
     // send a few setpoints before starting
-    for (int i = 10; ros::ok() && i > 0; --i) {
-      // local_pos_pub.publish(pose);
+    // for (int i = 100; ros::ok() && i > 0; --i) {
+    // local_pos_pub.publish(pose);
 
-      vs_body_axis.twist.linear.x = vx + vxfinal;
-      vs_body_axis.twist.linear.y = vy + vyfinal;
-      set_mode_client.call(offb_set_mode);
-      bodyAxisVelocityPublisher.publish(vs_body_axis);
+    vs_body_axis.twist.linear.x = vx + vxfinal;
+    vs_body_axis.twist.linear.y = vy + vyfinal;
+    set_mode_client.call(offb_set_mode);
 
-      rate.sleep();
-    }
+    bodyAxisVelocityPublisher.publish(vs_body_axis);
+    last_request = ros::Time::now();
+    rate.sleep();
+    //  }
 
     // mavros_msgs::SetMode offb_set_mode;
     // offb_set_mode.request.custom_mode = "OFFBOARD";
@@ -189,14 +226,6 @@ void tsa::Publish() {
 }
 void tsa::quad_cb(const std_msgs::String::ConstPtr &msg) {
   current_quad = *msg;
-
-  if (msg->data == "0") {
-    activate_ = false;
-
-  } else {
-    activate_ = true;
-    Publish();
-  }
 
   if (msg->data == "2 3") {
     vx = -1.0;
@@ -265,6 +294,32 @@ void tsa::quad_cb(const std_msgs::String::ConstPtr &msg) {
     vy = 0.0;
     cout << "quad 14" << endl;
   }
+
+  braking_distance =
+      sqrt((abs(vbx) * abs(vbx)) + (abs(vby) * abs(vby))) / (-2 * 1);
+
+  braking_distance = abs(braking_distance) * sqrt(abx * abx + aby * aby);
+
+  if (braking_distance < 2) {
+    braking_distance = 2;
+  }
+
+  // drone offset
+  float drone_offset = 0.25; // this is for iris
+  braking_distance += drone_offset;
+
+  if (braking_distance > 0.75) {
+    cout << "breaking " << braking_distance << " | vx " << vbx << " | vy "
+         << vby << " | abx " << abx << " | min " << minVal << endl;
+  }
+
+  if (minVal <= braking_distance) {
+    activate_ = true;
+
+  } else {
+    activate_ = false;
+  }
+  Publish();
 }
 
 int main(int argc, char **argv) {

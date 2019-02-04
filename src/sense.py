@@ -12,7 +12,7 @@ def callback(data):
     ranges = data.ranges
     rangesarray = np.array(ranges, dtype=np.float)
     sample_indices = np.where(np.logical_and(
-        rangesarray <= 3, rangesarray != np.float('inf')))
+        rangesarray <= 12, rangesarray != np.float('inf')))
     quad_str = '0'
     if sample_indices[0].size != 0:
         indices = sample_indices[0]
@@ -20,7 +20,7 @@ def callback(data):
         unique_quad = np.unique(indices_quad)
         unique_quad += 1
         quad_str = ' '.join(map(str, unique_quad))
-        print("Warning! Object detected under 0.5m")
+        print("Warning! Object detected")
         print("Object detected in quadrant " + quad_str)
 
         pub.publish(quad_str)
