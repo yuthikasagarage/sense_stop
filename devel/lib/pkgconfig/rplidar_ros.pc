@@ -1,0 +1,8 @@
+prefix=/home/acc/sense_stop/devel
+
+Name: rplidar_ros
+Description: Description of rplidar_ros
+Version: 1.10.0
+Cflags: 
+Libs: -L/home/acc/sense_stop/devel/lib 
+Requires: 

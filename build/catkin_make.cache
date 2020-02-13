@@ -1,0 +1,2 @@
+obs_stop:rplidar_ros
+-DCATKIN_DEVEL_PREFIX=/home/acc/sense_stop/devel -DCMAKE_INSTALL_PREFIX=/home/acc/sense_stop/install -G Unix Makefiles

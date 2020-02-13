@@ -1,0 +1,8 @@
+prefix=/home/acc/sense_stop/install
+
+Name: obs_stop
+Description: Description of obs_stop
+Version: 0.0.0
+Cflags: 
+Libs: -L/home/acc/sense_stop/install/lib 
+Requires: 
